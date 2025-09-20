@@ -138,7 +138,7 @@ footer a {
 }
 #channelbox input {
 	padding: 0.5rem 1rem;
-	padding-left: 5.3rem;
+	padding-left: 180px;
 	border: 2px solid var(--text);
 	border-radius: 0.5rem;
 }
@@ -354,18 +354,6 @@ footer a {
 	background: var(--controls-active);
 }
 
-#blarb {
-	display: block;
-	border: 0.1rem solid var(--text);
-	padding: 0.4rem 1rem;
-	box-sizing: border-box;
-	width: 100%;
-	max-width: 320px;
-	margin: 2rem auto 1rem;
-	line-height: 1.1;
-	text-decoration: none;
-	border-radius: 0.5rem;
-}
 
 @media only screen and (max-width: 600px) {
 	html {
