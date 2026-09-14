@@ -11,3 +11,19 @@ services:
     restart: unless-stopped
     ports:
       - "824:824"
+
+  coturn:
+    image: coturn/coturn:4.18.0-r0
+    # Linux host networking exposes TURN and the configured UDP relay range.
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      TURN_HOST: ${TURN_HOST:-${DOMAIN:-localhost}}
+      TURN_SECRET: ${TURN_SECRET:-}
+      TURN_USERNAME: ${TURN_USERNAME:-}
+      TURN_PASSWORD: ${TURN_PASSWORD:-}
+      EXTERNAL_IP: ${EXTERNAL_IP:-}
+    entrypoint: ["/bin/sh", "/etc/coturn/entrypoint.sh"]
+    volumes:
+      - ./coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
+      - ./coturn/entrypoint.sh:/etc/coturn/entrypoint.sh:ro
