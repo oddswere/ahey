@@ -26,3 +26,6 @@ data/
 # sublime
 *.sublime-project
 *.sublime-workspace
+
+# Persistent application database
+persistent-data/

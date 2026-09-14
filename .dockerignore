@@ -4,4 +4,7 @@ dist
 .DS_Store
 .git
 .gitignore
-*.md 
+*.md
+
+# Persistent application database
+persistent-data/

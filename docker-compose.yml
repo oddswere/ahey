@@ -11,6 +11,8 @@ services:
     restart: unless-stopped
     ports:
       - "824:824"
+    volumes:
+      - ${APP_DATA_DIR:-./persistent-data}:/app/data
 
   coturn:
     image: coturn/coturn:4.18.0-r0
