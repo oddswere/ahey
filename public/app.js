@@ -23,6 +23,7 @@ const App = Vue.createApp({
 			selectedVideoDeviceId: null,
 			name: name ?? window.localStorage.name,
 			callInitiated: false,
+			expandedPeerId: null,
 			localMediaStream: null,
 			screenShareStream: null,
 			isScreenSharing: false,
@@ -43,6 +44,7 @@ const App = Vue.createApp({
 			return Object.keys(this.peers)
 				.filter((p) => this.peers[p].data.userAgent)
 				.map((peer) => ({
+					id: peer,
 					stream: this.peers[peer].stream,
 					name: this.peers[peer].data.peerName,
 					isTalking: this.peers[peer].data.isTalking,
@@ -64,7 +66,16 @@ const App = Vue.createApp({
 		},
 	},
 	watch: {
+		expandedPeerId(peerId) {
+			document.body.classList.toggle("video-expanded", peerId !== null);
+		},
+		peersArray(peers) {
+			if (this.expandedPeerId !== null && !peers.some((peer) => peer.id === this.expandedPeerId)) {
+				this.closeExpandedVideo();
+			}
+		},
 		callInitiated(newValue, oldValue) {
+			if (!newValue) this.closeExpandedVideo();
 			if (oldValue && !newValue) {
 				// Call ended, clean up screen sharing
 				this.cleanupScreenShare();
@@ -381,6 +392,7 @@ const App = Vue.createApp({
 			this.getPreCallMedia();
 		},
 		endCall() {
+			this.resetPopups();
 			// Disconnect from signaling server
 			if (window.signalingSocket) {
 				window.signalingSocket.disconnect();
@@ -582,24 +594,34 @@ const App = Vue.createApp({
 				this.setToast("Не удалось получить доступ к камере/микрофону");
 			}
 		},
-		requestFullscreen(videoElem) {
-			if (!videoElem) return;
-			const el = Array.isArray(videoElem) ? videoElem[0] : videoElem;
-			if (el.requestFullscreen) {
-				el.requestFullscreen();
-			} else if (el.webkitRequestFullscreen) {
-				el.webkitRequestFullscreen();
-			} else if (el.mozRequestFullScreen) {
-				el.mozRequestFullScreen();
-			} else if (el.msRequestFullscreen) {
-				el.msRequestFullscreen();
+		toggleExpandedVideo(peerId) {
+			// Keep the live video inline so mobile browsers do not open their media player.
+			this.expandedPeerId = this.expandedPeerId === peerId ? null : peerId;
+		},
+		closeExpandedVideo() {
+			this.expandedPeerId = null;
+		},
+		onExpandedVideoKeydown(event) {
+			if (this.expandedPeerId === null) return;
+			if (event.key === "Escape") {
+				event.preventDefault();
+				this.closeExpandedVideo();
+			} else if (event.key === "Tab") {
+				// The return button is the only control in the expanded view.
+				event.preventDefault();
+				document.querySelector(".video.is-expanded .fullscreen-btn")?.focus();
 			}
 		},
 	},
 	mounted() {
+		document.addEventListener("keydown", this.onExpandedVideoKeydown);
 		if (!this.callInitiated) {
 			this.getPreCallMedia();
 		}
+	},
+	beforeUnmount() {
+		document.removeEventListener("keydown", this.onExpandedVideoKeydown);
+		document.body.classList.remove("video-expanded");
 	},
 }).mount("#app");
 

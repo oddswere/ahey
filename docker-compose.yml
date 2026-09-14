@@ -10,7 +10,7 @@ services:
     container_name: ahey-app
     restart: unless-stopped
     ports:
-      - "824:824"
+      - "824:${PORT:-824}"
     volumes:
       - ${APP_DATA_DIR:-./persistent-data}:/app/data
 

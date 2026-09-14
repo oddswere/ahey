@@ -67,3 +67,32 @@ body:not(.dashboard):not(.meeting-page)>.wrap { margin:40px auto; padding:0 20px
 /* Square tile background; camera picture keeps its own rounded clipping. */
 .meeting-page .before-call #videos>.video,
 .meeting-page .in-call #videos>.video { border-radius:0; }
+
+/* Expand live video within the page, including its return button. */
+body.video-expanded { overflow: hidden; }
+.meeting-page .in-call #videos > .video.is-expanded {
+	position: fixed;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	height: 100dvh;
+	padding: 0;
+	z-index: 1000;
+	background: #101827;
+	border-radius: 0;
+}
+#videos .video.is-expanded video { pointer-events: none; }
+#videos .video.is-expanded .fullscreen-btn {
+	top: max(12px, env(safe-area-inset-top));
+	right: max(12px, env(safe-area-inset-right));
+	width: auto;
+	min-height: 44px;
+	padding: 0 16px;
+	background: #fff;
+	color: #182237;
+	font-size: 15px;
+}
+#videos .video.is-expanded .meta {
+	bottom: max(12px, env(safe-area-inset-bottom));
+	left: max(12px, env(safe-area-inset-left));
+}

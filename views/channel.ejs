@@ -5,7 +5,7 @@
 	<body class="meeting-page">
 		<main id="app">
 			<div class="wrap max meeting-shell" :class="{'in-call':callInitiated,'before-call':!callInitiated}" v-cloak>
- <header class="meeting-header"><div class="service-brand"><span class="brand-icon"><i class="icon-video" aria-hidden="true"></i></span><span>Наберёшь?</span></div><div class="meeting-context"><strong>Видеовстреча</strong><span>Душа Компании</span></div><span class="meeting-badge" v-if="callInitiated">Участников: {{peersArray.length + 1}}</span><span class="meeting-badge" v-else>Подготовка к звонку</span></header>
+ <header class="meeting-header"><div class="service-brand"><span class="brand-icon"><i class="icon-video" aria-hidden="true"></i></span><span>Душа компании</span></div><div class="meeting-context"><strong>Видеовстреча</strong><span>Душа Компании</span></div><span class="meeting-badge" v-if="callInitiated">Участников: {{peersArray.length + 1}}</span><span class="meeting-badge" v-else>Подготовка к звонку</span></header>
 				<section id="toast" v-bind:class="toast.type + (toast.message ? ' show' : '')" v-on:click="toast.message = ''">
 					{{toast.message}}
 				</section>
@@ -22,6 +22,30 @@
 
 				<section v-if="callInitiated">
 					<div id="videos" v-bind:class="videoLayoutClass">
+						<div class="video" v-for="(peer, i) in peersArray" v-bind:key="peer.id"
+							:class="{'is-expanded': expandedPeerId === peer.id}"
+							:role="expandedPeerId === peer.id ? 'dialog' : null"
+							:aria-modal="expandedPeerId === peer.id ? 'true' : null"
+							:aria-label="expandedPeerId === peer.id ? peer.name : null">
+							<video
+								v-bind:ref="'peerVideo' + i"
+								v-bind:src-object.prop.camel="peer.stream"
+								autoplay
+								playsinline
+							></video>
+							<button type="button" class="fullscreen-btn"
+								:aria-label="expandedPeerId === peer.id ? 'Назад к участникам' : 'На весь экран'"
+								:title="expandedPeerId === peer.id ? 'Назад к участникам' : 'На весь экран'"
+								:aria-expanded="expandedPeerId === peer.id"
+								@click="toggleExpandedVideo(peer.id)">
+								<span v-if="expandedPeerId === peer.id">← Назад</span>
+								<i v-else class="icon-maximize" aria-hidden="true"></i>
+							</button>
+							<div class="meta">
+								{{peer.name}}
+								<i v-bind:class="'green icon-mic'" v-if="peer.isTalking"></i>
+							</div>
+						</div>
 						<div class="video self">
 							<video
 								v-bind:ref="'selfVideo'"
@@ -31,21 +55,6 @@
 								playsinline
 							></video>
 							<div class="meta">{{name}} (Вы)</div>
-						</div>
-						<div class="video" v-for="(peer, i) in peersArray" v-bind:key="peer.id || i">
-							<video
-								v-bind:ref="'peerVideo' + i"
-								v-bind:src-object.prop.camel="peer.stream"
-								autoplay
-								playsinline
-							></video>
-							<button aria-label="На весь экран" title="На весь экран" class="fullscreen-btn" @click="requestFullscreen($refs['peerVideo' + i])">
-								<i class="icon-maximize" aria-label="На весь экран"></i>
-							</button>
-							<div class="meta">
-								{{peer.name}}
-								<i v-bind:class="'green icon-mic'" v-if="peer.isTalking"></i>
-							</div>
 						</div>
 					</div>
 				</section>
@@ -86,7 +95,6 @@
 							</li>
 
 							<li class="action" @click="copyURL"><i class="icon-link"></i> Скопировать ссылку</li>
-							<li class="action red" @click="endCall" v-if="callInitiated"><i class="icon-phone-off"></i> Покинуть</li>
 						</ul>
 					</section>
 
@@ -131,6 +139,9 @@
 						</button>
 						<button :aria-label="isScreenSharing ? 'Остановить показ экрана' : 'Показать экран'" :title="isScreenSharing ? 'Остановить показ экрана' : 'Показать экран'" :aria-pressed="isScreenSharing" @click="toggleScreenShare" v-if="callInitiated && screenShareSupported" :class="{red:isScreenSharing}"><i class="icon-screen" aria-hidden="true"></i></button>
 						<button aria-label="Настройки звонка" title="Настройки звонка" @click="toggleExtraControls"><i class="icon-more-vertical"></i></button>
+						<button type="button" class="red" v-if="callInitiated" aria-label="Покинуть звонок" title="Покинуть звонок" @click="endCall">
+							<i class="icon-phone-off" aria-hidden="true"></i>
+						</button>
 						<button class="join" v-if="!callInitiated" v-on:click="initiateCall">
 							<i class="icon-phone"></i>&nbsp; Набрать
 						</button>
