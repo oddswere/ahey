@@ -56,7 +56,7 @@ router.get("/:channel", (req, res) => {
 			.render("invalid", { page: "invalid-channel", title: "Конференция не найдена", reason: "not_found" });
 	}
 
-	res.render("channel", { page: "channel", title: channel });
+	res.render("channel", { page: "channel", title: "Видеовстреча" });
 });
 
 // Route: Catch-all for 404 errors
