@@ -11,6 +11,6 @@ if [ -n "${EXTERNAL_IP:-}" ]; then set -- "$@" --external-ip="$EXTERNAL_IP"; fi
 if [ -n "${TLS_CERT:-}" ] && [ -n "${TLS_KEY:-}" ]; then
  set -- "$@" --cert="$TLS_CERT" --pkey="$TLS_KEY"
 else
- set -- "$@" --no-tls --no-dtls
+ set -- "$@" --no-tls
 fi
 exec turnserver "$@"
