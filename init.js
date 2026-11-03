@@ -45,4 +45,13 @@ app.use("/", routes);
 server.listen(PORT, config.HOST, () => {
 	console.log("naberesh server started");
 	console.log({ port: PORT, node_version: process.versions.node });
+	if (process.argv.includes("--create-test-room")) {
+		const { createConference } = require("./server/services/conferences");
+		const { id } = createConference({ telegramUserId: "local-test" });
+		const host = !config.HOST || ["127.0.0.1", "0.0.0.0", "::"].includes(config.HOST)
+			? "localhost"
+			: config.HOST;
+		const urlHost = host.includes(":") ? `[${host}]` : host;
+		console.log(`\nJoin test room: http://${urlHost}:${server.address().port}/${id}\n`);
+	}
 });

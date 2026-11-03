@@ -23,6 +23,9 @@ const App = Vue.createApp({
 			selectedVideoDeviceId: null,
 			name: name ?? window.localStorage.name,
 			callInitiated: false,
+			callStartedAt: null,
+			callElapsedSeconds: 0,
+			callTimerInterval: null,
 			expandedPeerId: null,
 			localMediaStream: null,
 			screenShareStream: null,
@@ -40,6 +43,14 @@ const App = Vue.createApp({
 		};
 	},
 	computed: {
+		callDuration() {
+			const seconds = this.callElapsedSeconds;
+			const minutes = Math.floor(seconds / 60);
+			const pad = (value) => String(value).padStart(2, "0");
+			return minutes < 60
+				? `${pad(minutes)}:${pad(seconds % 60)}`
+				: `${pad(Math.floor(minutes / 60))}:${pad(minutes % 60)}:${pad(seconds % 60)}`;
+		},
 		peersArray() {
 			return Object.keys(this.peers)
 				.filter((p) => this.peers[p].data.userAgent)
@@ -83,6 +94,27 @@ const App = Vue.createApp({
 		},
 	},
 	methods: {
+		startCallTimer({ channel, startedAt, serverNow }) {
+			if (!this.callInitiated || channel !== this.channelId) return;
+			if (!Number.isFinite(startedAt) || !Number.isFinite(serverNow)) return;
+			this.resetCallTimer();
+			this.callStartedAt = startedAt;
+			// Use the server's elapsed time to avoid client clock differences, and
+			// a monotonic clock so throttled tabs catch up without accumulating drift.
+			const elapsed = Math.max(0, serverNow - startedAt);
+			const receivedAt = performance.now();
+			const update = () => {
+				this.callElapsedSeconds = Math.floor((elapsed + performance.now() - receivedAt) / 1000);
+			};
+			update();
+			this.callTimerInterval = setInterval(update, 1000);
+		},
+		resetCallTimer() {
+			clearInterval(this.callTimerInterval);
+			this.callTimerInterval = null;
+			this.callStartedAt = null;
+			this.callElapsedSeconds = 0;
+		},
 		toggleChat() {
 			this.showChat = !this.showChat;
 			this.showExtraControls = false;
@@ -393,6 +425,7 @@ const App = Vue.createApp({
 		},
 		endCall() {
 			this.resetPopups();
+			this.resetCallTimer();
 			// Disconnect from signaling server
 			if (window.signalingSocket) {
 				window.signalingSocket.disconnect();
@@ -620,6 +653,7 @@ const App = Vue.createApp({
 		}
 	},
 	beforeUnmount() {
+		this.resetCallTimer();
 		document.removeEventListener("keydown", this.onExpandedVideoKeydown);
 		document.body.classList.remove("video-expanded");
 	},

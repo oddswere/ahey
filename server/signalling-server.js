@@ -12,6 +12,7 @@ const { getConferenceById } = require("./services/conferences");
 const channels = Object.create(null);
 const sockets = Object.create(null);
 const peers = Object.create(null);
+const callStartedAt = Object.create(null);
 
 const has = (obj, key) => Object.prototype.hasOwnProperty.call(obj, key);
 
@@ -38,7 +39,10 @@ const signallingServer = (socket) => {
 		// Already Joined
 		if (has(joinedChannels, channel)) return;
 
-		if (!has(channels, channel)) channels[channel] = Object.create(null);
+		if (!has(channels, channel)) {
+			channels[channel] = Object.create(null);
+			callStartedAt[channel] = Date.now();
+		}
 
 		if (!has(peers, channel)) peers[channel] = Object.create(null);
 
@@ -55,6 +59,7 @@ const signallingServer = (socket) => {
 
 		channels[channel][socket.id] = socket;
 		joinedChannels[channel] = channel;
+		socket.emit("callStarted", { channel, startedAt: callStartedAt[channel], serverNow: Date.now() });
 
 		const numPeers = Object.keys(peers[channel]).length;
 		console.log("joined channel=" + channel + " peers=" + numPeers);
@@ -93,6 +98,7 @@ const signallingServer = (socket) => {
 			// last peer disconnected from the channel
 			delete peers[channel];
 			delete channels[channel];
+			delete callStartedAt[channel];
 		}
 	};
 

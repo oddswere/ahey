@@ -5,8 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const root = path.resolve(__dirname, '..');
-function signalling() {
- const context = { module: {exports:{}}, console: {log(){}}, require(name) {
+function signalling(now = Date.now) {
+ const context = { Date: {now}, module: {exports:{}}, console: {log(){}}, require(name) {
   if(name === './utils') return require('../server/utils');
   if(name === './services/conferences') return {getConferenceById: id => ['one','two'].includes(id)};
   throw Error(name);
@@ -23,9 +23,9 @@ test('conference validation, member-only relay, metadata and disconnect', () => 
  a.handlers.join({channel:'one',userData:{peerName:'A'}});
  b.handlers.join({channel:'one',userData:{peerName:'B'}});
  c.handlers.join({channel:'two'});
- assert.equal(a.events[0][0],'addPeer');
+ assert.equal(a.events[1][0],'addPeer');
  c.handlers.relaySessionDescription({peer_id:'a',session_description:{type:'offer'}});
- assert.equal(a.events.length,1);
+ assert.equal(a.events.length,2);
  b.handlers.relayICECandidate({peer_id:'a',ice_candidate:{candidate:'test'}});
  assert.equal(a.events.at(-1)[0],'iceCandidate');
  a.handlers.updateUserData({channel:'one',key:'peerName',value:'Updated'});
@@ -35,7 +35,42 @@ test('conference validation, member-only relay, metadata and disconnect', () => 
  b.handlers.disconnect();
  assert.equal(a.events.at(-1)[0],'removePeer');
  a.handlers.disconnect();c.handlers.disconnect();
- const d=client('d'); d.handlers.join({channel:'one'});assert.equal(d.events.length,0);
+ const d=client('d'); d.handlers.join({channel:'one'});assert.equal(d.events.length,1);assert.equal(d.events[0][0],'callStarted');
+});
+test('call start is shared with late joiners and reconnects, and resets when the room empties', () => {
+ let now = 1000;
+ const connect = signalling(() => now);
+ const client = id => {
+  const handlers = {}, events = [];
+  connect({id, on: (name, handler) => handlers[name] = handler, emit: (name, payload) => events.push([name, payload])});
+  return {handlers, events, start: () => events.find(([name]) => name === 'callStarted')?.[1]};
+ };
+ const a = client('a'), b = client('b'), c = client('c');
+ assert.equal(a.start(), undefined);
+ a.handlers.join({channel: 'one'});
+ assert.equal(a.start().startedAt, 1000);
+ now = 61000;
+ b.handlers.join({channel: 'one', startedAt: now});
+ assert.equal(b.start().startedAt, 1000);
+ assert.equal(b.start().serverNow, 61000);
+ c.handlers.join({channel: 'two'});
+ assert.equal(c.start().startedAt, 61000);
+ const eventCount = b.events.length;
+ b.handlers.join({channel: 'one'});
+ assert.equal(b.events.length, eventCount);
+ a.handlers.disconnect();
+ now = 121000;
+ const reconnected = client('a2');
+ reconnected.handlers.join({channel: 'one'});
+ assert.equal(reconnected.start().startedAt, 1000);
+ b.handlers.disconnect();
+ reconnected.handlers.disconnect();
+ now = 181000;
+ const next = client('next');
+ next.handlers.join({channel: 'one'});
+ assert.equal(next.start().startedAt, 181000);
+ next.handlers.disconnect();
+ c.handlers.disconnect();
 });
 test('no inherited four-person limit',()=>{
  const connect=signalling();let additions=0;

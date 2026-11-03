@@ -164,7 +164,11 @@ window.initiateCall = () => {
 		}
 	});
 
-	signalingSocket.on("disconnect", cleanupAllPeers);
+	signalingSocket.on("disconnect", () => {
+		App.resetCallTimer();
+		cleanupAllPeers();
+	});
+	signalingSocket.on("callStarted", (config) => App.startCallTimer(config));
 
 	signalingSocket.on("addPeer", (config) => {
 		const peer_id = config.peer_id;

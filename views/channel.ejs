@@ -5,7 +5,7 @@
 	<body class="meeting-page">
 		<main id="app">
 			<div class="wrap max meeting-shell" :class="{'in-call':callInitiated,'before-call':!callInitiated}" v-cloak>
- <header class="meeting-header"><div class="service-brand"><span class="brand-icon"><i class="icon-video" aria-hidden="true"></i></span><span>Душа компании</span></div><div class="meeting-context"><strong>Видеовстреча</strong><span>Душа Компании</span></div><span class="meeting-badge" v-if="callInitiated">Участников: {{peersArray.length + 1}}</span><span class="meeting-badge" v-else>Подготовка к звонку</span></header>
+ <header class="meeting-header"><div class="service-brand"><span class="brand-icon"><i class="icon-video" aria-hidden="true"></i></span><span>Душа компании</span></div><div class="meeting-context"><strong>Видеовстреча</strong><span class="call-timer" v-if="callInitiated && callStartedAt !== null" role="timer" aria-label="Длительность звонка">{{callDuration}}</span><span v-else>Душа Компании</span></div><span class="meeting-badge" v-if="callInitiated">Участников: {{peersArray.length + 1}}</span><span class="meeting-badge" v-else>Подготовка к звонку</span></header>
 				<section id="toast" v-bind:class="toast.type + (toast.message ? ' show' : '')" v-on:click="toast.message = ''">
 					{{toast.message}}
 				</section>
