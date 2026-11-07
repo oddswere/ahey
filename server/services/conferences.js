@@ -3,7 +3,12 @@
 const crypto = require("crypto");
 const db = require("../db");
 const config = require("../config");
-const { isValidChannelName } = require("../utils");
+
+const words = require("../resources/room-words.json");
+
+if (!Array.isArray(words) || !words.length || words.some((word) => typeof word !== "string" || !/^[a-z]{1,59}$/.test(word))) {
+	throw new Error("room-words.json must contain an array of lowercase ASCII words, up to 59 letters each");
+}
 
 const selectByIdStmt = db.prepare("SELECT id, telegram_user_id, created_at, metadata FROM conferences WHERE id = ?");
 const insertStmt = db.prepare(
@@ -29,7 +34,9 @@ function getConferenceById(id) {
 }
 
 function generateId() {
-	return crypto.randomBytes(6).toString("hex"); // 12 hex chars
+	const word = words[crypto.randomInt(words.length)];
+	const digits = String(crypto.randomInt(10000)).padStart(4, "0");
+	return `${word}${digits}`;
 }
 
 function createConference({ telegramUserId, metadata }) {
@@ -37,25 +44,24 @@ function createConference({ telegramUserId, metadata }) {
 		throw new Error("telegramUserId is required");
 	}
 
-	let id;
-	let attempts = 0;
-	do {
-		id = generateId();
-		attempts++;
-		if (attempts > 5) throw new Error("Failed to generate unique id");
-	} while (!isValidChannelName(id) || getConferenceById(id));
-
 	const created_at = new Date().toISOString();
 	const payload = {
-		id,
 		telegram_user_id: telegramUserId,
 		created_at,
 		metadata: metadata ? JSON.stringify(metadata) : null,
 	};
 
-	insertStmt.run(payload);
-
-	return { id, createdAt: created_at };
+	for (let attempt = 0; attempt < 5; attempt++) {
+		const id = generateId();
+		try {
+			insertStmt.run({ ...payload, id });
+			return { id, createdAt: created_at };
+		} catch (error) {
+			// The database also reserves expired IDs and handles concurrent creators.
+			if (error.code !== "SQLITE_CONSTRAINT_PRIMARYKEY") throw error;
+		}
+	}
+	throw new Error("Failed to generate unique id");
 }
 
 module.exports = { createConference, getConferenceById };

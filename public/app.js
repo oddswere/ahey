@@ -43,6 +43,9 @@ const App = Vue.createApp({
 		};
 	},
 	computed: {
+		hasVideo() {
+			return this.videoEnabled || this.isScreenSharing;
+		},
 		callDuration() {
 			const seconds = this.callElapsedSeconds;
 			const minutes = Math.floor(seconds / 60);
@@ -58,6 +61,7 @@ const App = Vue.createApp({
 					id: peer,
 					stream: this.peers[peer].stream,
 					name: this.peers[peer].data.peerName,
+					hasVideo: this.peers[peer].data.hasVideo !== false,
 					isTalking: this.peers[peer].data.isTalking,
 				}));
 		},
@@ -77,6 +81,9 @@ const App = Vue.createApp({
 		},
 	},
 	watch: {
+		hasVideo() {
+			this.publishVideoState();
+		},
 		expandedPeerId(peerId) {
 			document.body.classList.toggle("video-expanded", peerId !== null);
 		},
@@ -94,6 +101,19 @@ const App = Vue.createApp({
 		},
 	},
 	methods: {
+		nameInitial(name) {
+			return Array.from((name || "").trim())[0]?.toUpperCase() || "?";
+		},
+		publishVideoState() {
+			if (!this.callInitiated) return;
+			// Keep join metadata current for participants who arrive later.
+			window.signalingSocket?.emit("updateUserData", {
+				channel: this.channelId,
+				key: "hasVideo",
+				value: this.hasVideo,
+			});
+			this.sendDataMessage("hasVideo", this.hasVideo);
+		},
 		startCallTimer({ channel, startedAt, serverNow }) {
 			if (!this.callInitiated || channel !== this.channelId) return;
 			if (!Number.isFinite(startedAt) || !Number.isFinite(serverNow)) return;
@@ -339,6 +359,8 @@ const App = Vue.createApp({
 		},
 
 		async stopScreenShare() {
+			if (!this.isScreenSharing) return;
+
 			try {
 				if (this.screenShareStream) {
 					// Stop all tracks in screen share stream
@@ -348,11 +370,24 @@ const App = Vue.createApp({
 
 				this.isScreenSharing = false;
 
+				// Screen sharing must never change the user's camera choice.
+				if (!this.videoEnabled) {
+					this.removeMediaTrack("video");
+					return;
+				}
+
 				// Get new video stream with the selected video device
 				const newVideoStream = await navigator.mediaDevices.getUserMedia({
 					audio: false,
 					video: { deviceId: { exact: this.selectedVideoDeviceId } },
 				});
+
+				// Camera permission/device setup may finish after the user turns it off,
+				// leaves the call, or starts sharing again.
+				if (!this.videoEnabled || !this.callInitiated || this.isScreenSharing) {
+					newVideoStream.getTracks().forEach((track) => track.stop());
+					return;
+				}
 
 				// Replace video track with camera track
 				const newVideoTrack = newVideoStream.getVideoTracks()[0];
@@ -361,6 +396,8 @@ const App = Vue.createApp({
 				this.setToast("Просмотр экрана остановлен", "success");
 			} catch (error) {
 				console.error("Ошибка при остановке просмотра экрана:", error);
+				this.videoEnabled = false;
+				this.removeMediaTrack("video");
 				this.setToast("Не удалось остановить просмотр экрана");
 			}
 		},
@@ -525,7 +562,9 @@ const App = Vue.createApp({
 					break;
 			}
 
-			Object.keys(this.dataChannels).map((peer_id) => this.dataChannels[peer_id].send(JSON.stringify(dataMessage)));
+			Object.values(this.dataChannels).forEach((channel) => {
+				if (channel.readyState === "open") channel.send(JSON.stringify(dataMessage));
+			});
 		},
 		setTalkingPeer(peerId, isTalking) {
 			if (this.peers[peerId] && this.peers[peerId].data.isTalking !== isTalking) {
@@ -537,6 +576,11 @@ const App = Vue.createApp({
 			switch (dataMessage.type) {
 				case "peerName":
 					this.peers[dataMessage.peerId].data.peerName = dataMessage.message;
+					break;
+				case "hasVideo":
+					if (typeof dataMessage.message === "boolean") {
+						this.peers[dataMessage.peerId].data.hasVideo = dataMessage.message;
+					}
 					break;
 				case "chat":
 					this.showChat = true;

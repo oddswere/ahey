@@ -14,7 +14,7 @@
  <div class="precall-heading"><h1>Перед встречей</h1><p>Проверьте, как вас видно и слышно.</p></div>
 					<div id="videos" class="layout-1">
 						<div class="video self">
-							<div class="camera-placeholder" v-if="!videoEnabled"><span class="avatar-placeholder">{{(name || 'Вы').slice(0,1).toUpperCase()}}</span><span>Камера выключена</span></div>
+							<div class="camera-placeholder" v-if="!videoEnabled"><span class="avatar-placeholder">{{nameInitial(name)}}</span><span>Камера выключена</span></div>
  <video id="preCallVideo" class="video self" autoplay muted playsinline></video>
 						</div>
 					</div>
@@ -27,6 +27,10 @@
 							:role="expandedPeerId === peer.id ? 'dialog' : null"
 							:aria-modal="expandedPeerId === peer.id ? 'true' : null"
 							:aria-label="expandedPeerId === peer.id ? peer.name : null">
+							<div class="camera-placeholder" v-if="!peer.hasVideo">
+								<span class="avatar-placeholder">{{nameInitial(peer.name)}}</span>
+								<span>Камера выключена</span>
+							</div>
 							<video
 								v-bind:ref="'peerVideo' + i"
 								v-bind:src-object.prop.camel="peer.stream"
@@ -47,6 +51,10 @@
 							</div>
 						</div>
 						<div class="video self">
+							<div class="camera-placeholder" v-if="!hasVideo">
+								<span class="avatar-placeholder">{{nameInitial(name)}}</span>
+								<span>Камера выключена</span>
+							</div>
 							<video
 								v-bind:ref="'selfVideo'"
 								v-bind:src-object.prop.camel="localMediaStream"

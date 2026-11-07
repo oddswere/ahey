@@ -73,6 +73,13 @@ const addLocalTracksToPeer = (peerConnection) => {
 };
 
 const setupOfferCreation = (peerConnection, peer_id) => {
+	// A participant with a disabled device must still offer to receive that media.
+	for (const kind of ["audio", "video"]) {
+		if (!peerConnection.getTransceivers().some((transceiver) => transceiver.receiver.track.kind === kind)) {
+			peerConnection.addTransceiver(kind, { direction: "recvonly" });
+		}
+	}
+
 	peerConnection.onnegotiationneeded = () => {
 		peerConnection
 			.createOffer()
@@ -91,42 +98,54 @@ const setupOfferCreation = (peerConnection, peer_id) => {
 	};
 };
 
-const handleSessionDescription = (config) => {
+const addPeerIceCandidate = async (peer, candidate) => {
+	try {
+		await peer.rtc.addIceCandidate(new RTCIceCandidate(candidate));
+	} catch (error) {
+		console.log("Error addIceCandidate", error);
+	}
+};
+
+const handleSessionDescription = async (config) => {
 	const peer_id = config.peer_id;
-	const peer = App.peers[peer_id]["rtc"];
+	const peer = App.peers[peer_id];
+	if (!peer) return;
+	const peerConnection = peer.rtc;
 	const remoteDescription = config.session_description;
 
-	const desc = new RTCSessionDescription(remoteDescription);
-	peer.setRemoteDescription(
-		desc,
-		() => {
-			if (remoteDescription.type == "offer") {
-				peer.createAnswer(
-					(localDescription) => {
-						peer.setLocalDescription(
-							localDescription,
-							() =>
-								signalingSocket.emit("relaySessionDescription", {
-									peer_id,
-									session_description: localDescription,
-								}),
-							() => console.log("Answer setLocalDescription failed!")
-						);
-					},
-					(error) => console.log("Error creating answer: ", error)
-				);
-			}
-		},
-		(error) => console.log("setRemoteDescription error: ", error)
-	);
+	try {
+		await peerConnection.setRemoteDescription(new RTCSessionDescription(remoteDescription));
+		if (App.peers[peer_id] !== peer) return;
+
+		// Candidates can arrive before setRemoteDescription has completed.
+		// Keep them until the browser has the description needed to accept them.
+		while (peer.pendingIceCandidates.length) {
+			await addPeerIceCandidate(peer, peer.pendingIceCandidates.shift());
+			if (App.peers[peer_id] !== peer) return;
+		}
+
+		if (remoteDescription.type === "offer") {
+			const localDescription = await peerConnection.createAnswer();
+			await peerConnection.setLocalDescription(localDescription);
+			if (App.peers[peer_id] !== peer) return;
+			signalingSocket.emit("relaySessionDescription", {
+				peer_id,
+				session_description: localDescription,
+			});
+		}
+	} catch (error) {
+		console.log("Error handling session description:", error);
+	}
 };
 
 const handleIceCandidate = (config) => {
-	const peer = App.peers[config.peer_id]["rtc"];
-	const iceCandidate = config.ice_candidate;
-	peer.addIceCandidate(new RTCIceCandidate(iceCandidate)).catch((error) => {
-		console.log("Error addIceCandidate", error);
-	});
+	const peer = App.peers[config.peer_id];
+	if (!peer) return;
+	if (!peer.rtc.remoteDescription) {
+		peer.pendingIceCandidates.push(config.ice_candidate);
+		return;
+	}
+	return addPeerIceCandidate(peer, config.ice_candidate);
 };
 
 const cleanupPeer = (peer_id) => {
@@ -155,7 +174,7 @@ window.initiateCall = () => {
 
 	signalingSocket.on("connect", () => {
 		App.peerId = signalingSocket.id;
-		const userData = { peerName: App.name, userAgent: App.userAgent };
+		const userData = { peerName: App.name, userAgent: App.userAgent, hasVideo: App.hasVideo };
 
 		if (App.localMediaStream) {
 			joinChatChannel(App.channelId, userData);
@@ -175,12 +194,18 @@ window.initiateCall = () => {
 		if (peer_id in App.peers) return;
 
 		const peerConnection = createPeerConnection();
-		App.peers[peer_id] = { ...App.peers[peer_id], data: config.channel[peer_id].userData };
+		App.peers[peer_id] = {
+			...App.peers[peer_id],
+			data: config.channel[peer_id].userData,
+			pendingIceCandidates: [],
+		};
 		App.peers[peer_id]["rtc"] = peerConnection;
 
 		setupPeerConnectionHandlers(peerConnection, peer_id);
 		addLocalTracksToPeer(peerConnection);
 		App.dataChannels[peer_id] = peerConnection.createDataChannel("ot__data_channel");
+		// Send the latest state after connection, including changes made during setup.
+		App.dataChannels[peer_id].onopen = () => App.publishVideoState();
 
 		if (config.should_create_offer) {
 			setupOfferCreation(peerConnection, peer_id);
