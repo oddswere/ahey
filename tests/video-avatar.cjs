@@ -7,7 +7,7 @@ const { reactive, computed, watch, nextTick } = require('vue');
 
 function videoApp() {
  const events = [], handlers = {};
- const socket = {id: 'self', on: (key, handler) => handlers[key] = handler,
+ const socket = {id: 'self', connected: true, on: (key, handler) => handlers[key] = handler,
   emit: (key, data) => events.push([key, JSON.parse(JSON.stringify(data))])};
  let app;
  const context = {
@@ -50,7 +50,7 @@ test('camera changes reach connected peers and refresh metadata for late joiners
  app.callInitiated = true;
  app.localMediaStream = {getTracks: () => []};
  context.window.initiateCall();
- handlers.connect();
+ await handlers.connect();
  assert.equal(events.find(([key]) => key === 'join')[1].userData.hasVideo, false);
  handlers.addPeer({peer_id: 'other', channel: {other: {userData: {peerName: 'Bob', userAgent: 'test', hasVideo: false}}}});
  assert.equal(app.peersArray[0].hasVideo, false);

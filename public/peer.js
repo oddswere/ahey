@@ -165,21 +165,29 @@ const cleanupAllPeers = () => {
 	App.cleanupScreenShare();
 };
 
-const joinChatChannel = (channel, userData) => signalingSocket.emit("join", { channel, userData });
-
 window.initiateCall = () => {
 	App.userAgent = navigator.userAgent;
-	signalingSocket = io(SIGNALLING_SERVER);
+	const socket = io(SIGNALLING_SERVER);
+	signalingSocket = socket;
 	window.signalingSocket = signalingSocket; /* expose for global access */
 
-	signalingSocket.on("connect", () => {
-		App.peerId = signalingSocket.id;
-		const userData = { peerName: App.name, userAgent: App.userAgent, hasVideo: App.hasVideo };
-
-		if (App.localMediaStream) {
-			joinChatChannel(App.channelId, userData);
-		} else {
-			setupLocalMedia(() => joinChatChannel(App.channelId, userData));
+	signalingSocket.on("connect", async () => {
+		const peerId = socket.id;
+		App.peerId = peerId;
+		const isCurrentCall = () => App.callInitiated && signalingSocket === socket && socket.connected && socket.id === peerId;
+		try {
+			// Reuse the preview request and its permission-denied fallback. A second
+			// getUserMedia request could fail without ever sending the room join.
+			await App.ensureLocalMedia();
+			if (!isCurrentCall()) return;
+			const userData = { peerName: App.name, userAgent: App.userAgent, hasVideo: App.hasVideo };
+			socket.emit("join", { channel: App.channelId, userData });
+		} catch (error) {
+			console.error("Unable to prepare call media:", error);
+			if (!isCurrentCall()) return;
+			App.callInitiated = false;
+			socket.disconnect();
+			App.setToast("Не удалось подготовить камеру и микрофон. Попробуйте войти ещё раз.");
 		}
 	});
 
@@ -217,31 +225,6 @@ window.initiateCall = () => {
 	signalingSocket.on("iceCandidate", handleIceCandidate);
 	signalingSocket.on("removePeer", (config) => cleanupPeer(config.peer_id));
 };
-
-function setupLocalMedia(callback) {
-	if (App.localMediaStream != null) {
-		if (callback) callback();
-		return;
-	}
-
-	// Build constraints based on settings
-	const constraints = {
-		audio: App.audioEnabled ? (App.selectedAudioDeviceId ? { deviceId: App.selectedAudioDeviceId } : true) : false,
-		video: App.videoEnabled ? (App.selectedVideoDeviceId ? { deviceId: App.selectedVideoDeviceId } : true) : false,
-	};
-
-	navigator.mediaDevices
-		.getUserMedia(constraints)
-		.then((stream) => {
-			App.localMediaStream = stream;
-
-			if (callback) callback();
-		})
-		.catch((error) => {
-			console.error(error);
-			App.setToast("Unable to get microphone access.");
-		});
-}
 
 function handleAudioStream(stream, peerId) {
 	// Is peer talking analyser from https://www.linkedin.com/pulse/webrtc-active-speaker-detection-nilesh-gawande/

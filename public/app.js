@@ -28,6 +28,7 @@ const App = Vue.createApp({
 			callTimerInterval: null,
 			expandedPeerId: null,
 			localMediaStream: null,
+			preCallMediaPromise: null,
 			screenShareStream: null,
 			isScreenSharing: false,
 			peers: {},
@@ -420,10 +421,11 @@ const App = Vue.createApp({
 		},
 
 		initiateCall() {
+			if (this.callInitiated) return;
 			if (!this.channelId) return alert("Неверный ID канала");
 			if (!this.name) return alert("Пожалуйста, введите ваше имя");
 			this.callInitiated = true;
-			this.showExtraControls - false;
+			this.showExtraControls = false;
 			window.initiateCall();
 		},
 		setToast(message, type = "error") {
@@ -631,7 +633,23 @@ const App = Vue.createApp({
 			}
 			return null;
 		},
-		async getPreCallMedia() {
+		getPreCallMedia() {
+			// Serialize preview updates so an older permission request cannot replace
+			// the stream after the user changes devices or starts a new call.
+			this.preCallMediaPromise = Promise.resolve(this.preCallMediaPromise)
+				.catch(() => {})
+				.then(() => this.acquirePreCallMedia());
+			return this.preCallMediaPromise;
+		},
+		async ensureLocalMedia() {
+			if (!this.preCallMediaPromise && !this.localMediaStream) this.getPreCallMedia();
+			let pending;
+			do {
+				pending = this.preCallMediaPromise;
+				await pending;
+			} while (pending !== this.preCallMediaPromise);
+		},
+		async acquirePreCallMedia() {
 			try {
 				if (this.localMediaStream) {
 					this.localMediaStream.getTracks().forEach((track) => track.stop());
@@ -648,7 +666,9 @@ const App = Vue.createApp({
 							: true
 						: false,
 				};
-				this.localMediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+				this.localMediaStream = constraints.audio || constraints.video
+					? await navigator.mediaDevices.getUserMedia(constraints)
+					: new MediaStream([this.getBlankTrack("audio"), this.getBlankTrack("video")]);
 				const videoElem = document.getElementById("preCallVideo");
 				if (videoElem) {
 					videoElem.srcObject = this.localMediaStream;
