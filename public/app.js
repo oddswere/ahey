@@ -16,11 +16,15 @@ const App = Vue.createApp({
 			peerId: "",
 			userAgent: "",
 			audioDevices: [],
+			audioOutputDevices: [],
 			videoDevices: [],
 			audioEnabled: true,
 			videoEnabled: true,
 			selectedAudioDeviceId: null,
+			selectedAudioOutputDeviceId: "",
+			audioOutputSwitchPending: false,
 			selectedVideoDeviceId: null,
+			mediaRequestVersions: { audio: 0, video: 0 },
 			name: name ?? window.localStorage.name,
 			callInitiated: false,
 			callStartedAt: null,
@@ -68,6 +72,12 @@ const App = Vue.createApp({
 		},
 		screenShareSupported() {
 			return navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia;
+		},
+		audioOutputSupported() {
+			return typeof window.HTMLMediaElement?.prototype.setSinkId === "function";
+		},
+		audioOutputPickerSupported() {
+			return this.audioOutputSupported && typeof navigator.mediaDevices?.selectAudioOutput === "function";
 		},
 		videoLayoutClass() {
 			const totalParticipants = this.peersArray.length + 1; // +1 for self
@@ -143,6 +153,7 @@ const App = Vue.createApp({
 		toggleExtraControls() {
 			this.showExtraControls = !this.showExtraControls;
 			this.showChat = false;
+			if (this.showExtraControls) this.refreshDevices();
 		},
 		resetPopups() {
 			this.showChat = false;
@@ -151,12 +162,11 @@ const App = Vue.createApp({
 			this.showVideoDevices = false;
 		},
 		async toggleMedia(kind) {
+			const requestVersion = ++this.mediaRequestVersions[kind];
 			const enabledKey = kind + "Enabled";
 			const selectedDeviceIdKey = "selected" + (kind.charAt(0).toUpperCase() + kind.slice(1)) + "DeviceId";
 			const getTracks = kind === "audio" ? "getAudioTracks" : "getVideoTracks";
-			const replaceTrackMethod = kind === "audio" ? "replaceAudioTrack" : "replaceVideoTrack";
-
-			const existingTrack = this.localMediaStream[getTracks]()[0];
+			const existingTrack = this.localMediaStream?.[getTracks]()[0];
 
 			if (existingTrack && this[enabledKey]) {
 				existingTrack.enabled = false;
@@ -164,59 +174,95 @@ const App = Vue.createApp({
 				existingTrack.stop();
 				this.removeMediaTrack(kind);
 			} else {
+				let newStream;
 				try {
+					const device = this[selectedDeviceIdKey] ? { deviceId: { exact: this[selectedDeviceIdKey] } } : true;
 					const constraints =
 						kind === "audio"
-							? { audio: { deviceId: { exact: this[selectedDeviceIdKey] } }, video: false }
-							: { audio: false, video: { deviceId: { exact: this[selectedDeviceIdKey] } } };
-					const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+							? { audio: device, video: false }
+							: { audio: false, video: device };
+					newStream = await navigator.mediaDevices.getUserMedia(constraints);
+					if (requestVersion !== this.mediaRequestVersions[kind] || !this.callInitiated) {
+						newStream.getTracks().forEach((track) => track.stop());
+						return;
+					}
 					const newTrack = newStream[getTracks]()[0];
-					this[replaceTrackMethod](newTrack);
+					await this.replaceMediaTrack(newTrack, kind, () => requestVersion === this.mediaRequestVersions[kind]);
 					this[enabledKey] = true;
 				} catch {
-					this.setToast(`Не удалось включить ${kind}`);
+					newStream?.getTracks().forEach((track) => track.stop());
+					if (requestVersion === this.mediaRequestVersions[kind]) this.setToast(`Не удалось включить ${kind}`);
 				}
 			}
 		},
-		async switchMediaDevice(newDeviceId, kind) {
+		switchMediaDevice(newDeviceId, kind) {
+			const requestVersion = ++this.mediaRequestVersions[kind];
+			// Share the preview queue with joining, so the call uses the chosen source.
+			this.preCallMediaPromise = Promise.resolve(this.preCallMediaPromise)
+				.catch(() => {})
+				.then(() => this.acquireMediaDevice(newDeviceId, kind, requestVersion));
+			return this.preCallMediaPromise;
+		},
+		async acquireMediaDevice(newDeviceId, kind, requestVersion) {
+			const isCurrent = () => requestVersion === this.mediaRequestVersions[kind];
+			if (!isCurrent()) return;
+			const selectedKey = kind === "audio" ? "selectedAudioDeviceId" : "selectedVideoDeviceId";
+			// Choosing a source must not unmute the user or interrupt screen sharing.
+			if (!this[kind + "Enabled"] || (kind === "video" && this.isScreenSharing)) {
+				this[selectedKey] = newDeviceId;
+				return;
+			}
+			let newStream;
 			try {
+				const device = newDeviceId ? { deviceId: { exact: newDeviceId } } : true;
 				const constraints =
 					kind === "audio"
-						? { audio: { deviceId: { exact: newDeviceId } }, video: false }
-						: { audio: false, video: { deviceId: { exact: newDeviceId } } };
-				const newStream = await navigator.mediaDevices.getUserMedia(constraints);
-				const getTracks = kind === "audio" ? "getAudioTracks" : "getVideoTracks";
-				const replaceTrackMethod = kind === "audio" ? "replaceAudioTrack" : "replaceVideoTrack";
-				if (this.localMediaStream) {
-					const oldTrack = this.localMediaStream[getTracks]()[0];
-					if (oldTrack) oldTrack.stop();
+						? { audio: device, video: false }
+						: { audio: false, video: device };
+				newStream = await navigator.mediaDevices.getUserMedia(constraints);
+				if (!isCurrent() || !this[kind + "Enabled"] || (kind === "video" && this.isScreenSharing)) {
+					newStream.getTracks().forEach((track) => track.stop());
+					return;
 				}
+				const getTracks = kind === "audio" ? "getAudioTracks" : "getVideoTracks";
 				const newTrack = newStream[getTracks]()[0];
-				this[replaceTrackMethod](newTrack);
-				this.setToast(`${kind.charAt(0).toUpperCase() + kind.slice(1)} устройство изменено успешно`, "success");
+				await this.replaceMediaTrack(newTrack, kind, isCurrent);
+				this[selectedKey] = newDeviceId;
+				const preview = document.getElementById("preCallVideo");
+				if (preview) preview.srcObject = this.localMediaStream;
+				this.setToast(kind === "audio" ? "Микрофон изменён" : "Камера изменена", "success");
 			} catch {
-				this.setToast(`Не удалось переключить ${kind}`);
+				newStream?.getTracks().forEach((track) => track.stop());
+				if (isCurrent()) this.setToast(kind === "audio" ? "Не удалось переключить микрофон" : "Не удалось переключить камеру");
 			}
 		},
-		replaceMediaTrack(newTrack, kind) {
-			const getSendersKind = kind;
-			Object.keys(this.peers).forEach((peerId) => {
-				const peerConnection = this.peers[peerId].rtc;
-				const senders = peerConnection.getSenders();
-				const sender = senders.find((s) => s.track && s.track.kind === getSendersKind);
+		async replaceMediaTrack(newTrack, kind, isCurrent = () => true) {
+			if (!newTrack) throw new Error(`No ${kind} track available`);
+			const replacements = [];
+			const additions = [];
+			const results = await Promise.allSettled(Object.entries(this.peers).map(async ([peerId, peer]) => {
+				const sender = peer.rtc.getSenders().find((s) => s.track?.kind === kind);
 				if (sender) {
-					sender.replaceTrack(newTrack);
+					replacements.push({ sender, track: sender.track });
+					await sender.replaceTrack(newTrack);
 				} else {
-					peerConnection.addTrack(newTrack, this.localMediaStream);
-					this.triggerRenegotiation(peerId);
+					additions.push({ peerId, rtc: peer.rtc, sender: peer.rtc.addTrack(newTrack, this.localMediaStream) });
 				}
-			});
-			if (this.localMediaStream) {
-				const getTracks = kind === "audio" ? "getAudioTracks" : "getVideoTracks";
-				const oldTrack = this.localMediaStream[getTracks]()[0];
-				if (oldTrack) this.localMediaStream.removeTrack(oldTrack);
-				this.localMediaStream.addTrack(newTrack);
+			}));
+			const failure = results.find((result) => result.status === "rejected");
+			if (failure || !isCurrent()) {
+				await Promise.allSettled(replacements.map(({ sender, track }) => sender.replaceTrack(
+					isCurrent() ? track : this.localMediaStream?.getTracks().find((item) => item.kind === kind) ?? null
+				)));
+				additions.forEach(({ rtc, sender }) => rtc.removeTrack(sender));
+				throw failure?.reason ?? new Error("Media selection superseded");
 			}
+			if (!this.localMediaStream) this.localMediaStream = new MediaStream();
+			const oldTracks = this.localMediaStream.getTracks().filter((track) => track.kind === kind);
+			oldTracks.forEach((track) => this.localMediaStream.removeTrack(track));
+			this.localMediaStream.addTrack(newTrack);
+			oldTracks.forEach((track) => track.stop());
+			additions.forEach(({ peerId }) => this.triggerRenegotiation(peerId));
 		},
 		removeMediaTrack(kind) {
 			// kind: "video" or "audio"
@@ -454,15 +500,73 @@ const App = Vue.createApp({
 		switchVideoDevice(newDeviceId) {
 			return this.switchMediaDevice(newDeviceId, "video");
 		},
+		async applyAudioOutput(element) {
+			if (!element || !this.audioOutputSupported || this.audioOutputSwitchPending) return;
+			const deviceId = this.selectedAudioOutputDeviceId;
+			try {
+				if (element.sinkId !== deviceId) {
+					await element.setSinkId(deviceId);
+				}
+				if (deviceId !== this.selectedAudioOutputDeviceId) {
+					await this.applyAudioOutput(element);
+				}
+			} catch {
+				this.setToast("Не удалось направить звук участника на выбранное устройство");
+			}
+		},
+		onAudioOutputChange(event) {
+			const value = event.target.value;
+			const usePicker = value === "__choose_audio_output__";
+			// Keep the active device selected until switching succeeds, including on cancellation.
+			event.target.value = this.selectedAudioOutputDeviceId;
+			return this.switchAudioOutput(usePicker ? "" : value, usePicker);
+		},
+		async switchAudioOutput(newDeviceId, usePicker = false) {
+			if (!this.audioOutputSupported || this.audioOutputSwitchPending) return;
+			this.audioOutputSwitchPending = true;
+			const previousDeviceId = this.selectedAudioOutputDeviceId;
+			let elements = [];
+			try {
+				if (usePicker) {
+					// Keep the browser permission picker within the user's click gesture.
+					const device = await navigator.mediaDevices.selectAudioOutput({ deviceId: newDeviceId });
+					newDeviceId = device.deviceId;
+					if (!this.audioOutputDevices.some((item) => item.deviceId === device.deviceId)) {
+						this.audioOutputDevices.push(device);
+					}
+				}
+				// Validate even before a call, when there are no remote media elements yet.
+				await document.createElement("audio").setSinkId(newDeviceId);
+				elements = Array.from(document.querySelectorAll("video[data-peer-audio]"));
+				const results = await Promise.allSettled(elements.map((element) => element.setSinkId(newDeviceId)));
+				const failure = results.find((result) => result.status === "rejected");
+				if (failure) throw failure.reason;
+				this.selectedAudioOutputDeviceId = newDeviceId;
+				this.setToast("Устройство вывода звука изменено", "success");
+			} catch (error) {
+				await Promise.allSettled(elements.map((element) => element.setSinkId(previousDeviceId)));
+				this.setToast(error.name === "AbortError" && usePicker
+					? "Выбор устройства вывода отменён"
+					: "Не удалось переключить вывод звука. Проверьте подключение и разрешение на выбор устройства.");
+			} finally {
+				this.audioOutputSwitchPending = false;
+				// Include participants whose video elements appeared while switching.
+				document.querySelectorAll("video[data-peer-audio]").forEach((element) => this.applyAudioOutput(element));
+			}
+		},
 		togglePreCallAudio() {
+			this.mediaRequestVersions.audio++;
 			this.audioEnabled = !this.audioEnabled;
 			this.getPreCallMedia();
 		},
 		togglePreCallVideo() {
+			this.mediaRequestVersions.video++;
 			this.videoEnabled = !this.videoEnabled;
 			this.getPreCallMedia();
 		},
 		endCall() {
+			this.mediaRequestVersions.audio++;
+			this.mediaRequestVersions.video++;
 			this.resetPopups();
 			this.resetCallTimer();
 			// Disconnect from signaling server
@@ -593,21 +697,37 @@ const App = Vue.createApp({
 			}
 		},
 		async enumerateDevices() {
-			// Request media permissions and enumerate devices
 			try {
 				const devices = await navigator.mediaDevices.enumerateDevices();
 
 				this.audioDevices = devices.filter((device) => device.kind === "audioinput");
+				this.audioOutputDevices = devices.filter((device) => device.kind === "audiooutput");
 				this.videoDevices = devices.filter((device) => device.kind === "videoinput");
 
-				// Set default device ids
-				const defaultAudioDeviceId = this.audioDevices.find((device) => device.deviceId == "default")?.deviceId;
-				const defaultVideoDeviceId = this.videoDevices.find((device) => device.deviceId == "default")?.deviceId;
-
-				this.selectedAudioDeviceId = defaultAudioDeviceId ?? this.audioDevices[0]?.deviceId;
-				this.selectedVideoDeviceId = defaultVideoDeviceId ?? this.videoDevices[0]?.deviceId;
+				// Enumeration must not reset an explicitly chosen source.
+				this.selectedAudioDeviceId = this.selectedAudioDeviceId ?? this.localMediaStream?.getAudioTracks()[0]?.getSettings?.().deviceId
+					?? this.audioDevices.find((device) => device.deviceId === "default")?.deviceId
+					?? this.audioDevices[0]?.deviceId;
+				this.selectedVideoDeviceId = this.selectedVideoDeviceId ?? this.localMediaStream?.getVideoTracks()[0]?.getSettings?.().deviceId
+					?? this.videoDevices.find((device) => device.deviceId === "default")?.deviceId
+					?? this.videoDevices[0]?.deviceId;
+				return true;
 			} catch (error) {
 				console.error("Failed to initialize media devices:", error);
+				return false;
+			}
+		},
+		async refreshDevices() {
+			if (!await this.enumerateDevices()) return;
+			for (const kind of ["audio", "video"]) {
+				const devices = this[kind + "Devices"];
+				const selectedKey = kind === "audio" ? "selectedAudioDeviceId" : "selectedVideoDeviceId";
+				if (devices.length && !devices.some((device) => device.deviceId === this[selectedKey])) {
+					this.switchMediaDevice(devices.find((device) => device.deviceId === "default")?.deviceId ?? devices[0].deviceId, kind);
+				}
+			}
+			if (this.selectedAudioOutputDeviceId && !this.audioOutputDevices.some((device) => device.deviceId === this.selectedAudioOutputDeviceId)) {
+				await this.switchAudioOutput("");
 			}
 		},
 		getBlankTrack(kind) {
@@ -657,12 +777,12 @@ const App = Vue.createApp({
 				const constraints = {
 					audio: this.audioEnabled
 						? this.selectedAudioDeviceId
-							? { deviceId: this.selectedAudioDeviceId }
+							? { deviceId: { exact: this.selectedAudioDeviceId } }
 							: true
 						: false,
 					video: this.videoEnabled
 						? this.selectedVideoDeviceId
-							? { deviceId: this.selectedVideoDeviceId }
+							? { deviceId: { exact: this.selectedVideoDeviceId } }
 							: true
 						: false,
 				};
@@ -712,12 +832,14 @@ const App = Vue.createApp({
 	},
 	mounted() {
 		document.addEventListener("keydown", this.onExpandedVideoKeydown);
+		navigator.mediaDevices?.addEventListener("devicechange", this.refreshDevices);
 		if (!this.callInitiated) {
 			this.getPreCallMedia();
 		}
 	},
 	beforeUnmount() {
 		this.resetCallTimer();
+		navigator.mediaDevices?.removeEventListener("devicechange", this.refreshDevices);
 		document.removeEventListener("keydown", this.onExpandedVideoKeydown);
 		document.body.classList.remove("video-expanded");
 	},

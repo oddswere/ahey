@@ -31,7 +31,8 @@
 								<span class="avatar-placeholder">{{nameInitial(peer.name)}}</span>
 							</div>
 							<video
-								v-bind:ref="'peerVideo' + i"
+								@vue:mounted="applyAudioOutput($event.el)"
+								data-peer-audio
 								v-bind:src-object.prop.camel="peer.stream"
 								autoplay
 								playsinline
@@ -73,16 +74,22 @@
 							<li class="action" @click="showAudioDevices = !showAudioDevices">
 								<i class="icon-mic"></i> Изменить аудио
 							</li>
-							<li
-								class="action indent"
-								v-if="showAudioDevices"
-								v-for="(audioDevice, i) in audioDevices"
-								v-bind:key="audioDevice.deviceId"
-								@click="selectedAudioDeviceId = audioDevice.deviceId"
-							>
-								<i class="icon-minus" v-if="selectedAudioDeviceId !== audioDevice.deviceId"></i>
-								<i class="icon-check" v-if="selectedAudioDeviceId === audioDevice.deviceId"></i>
-								{{audioDevice.label}}
+							<li class="device-field" v-if="showAudioDevices">
+								<label for="audio-input">Микрофон</label>
+								<select id="audio-input" :value="selectedAudioDeviceId" @change="switchAudioDevice($event.target.value)" :disabled="!audioDevices.length">
+									<option v-if="!audioDevices.length" value="">Микрофоны не найдены</option>
+									<option v-for="(device, i) in audioDevices" :key="device.deviceId" :value="device.deviceId">{{device.label || 'Микрофон ' + (i + 1)}}</option>
+								</select>
+								<p v-if="!audioEnabled">Выбранный микрофон будет использован, когда вы включите звук.</p>
+							</li>
+							<li class="device-field" v-if="showAudioDevices">
+								<label for="audio-output">Динамики</label>
+								<select id="audio-output" :value="selectedAudioOutputDeviceId" @change="onAudioOutputChange" :disabled="!audioOutputSupported || audioOutputSwitchPending">
+									<option value="">По умолчанию в системе</option>
+									<option v-for="(device, i) in audioOutputDevices" :key="device.deviceId" :value="device.deviceId">{{device.label || 'Устройство вывода ' + (i + 1)}}</option>
+									<option v-if="audioOutputPickerSupported" value="__choose_audio_output__">Другое устройство…</option>
+								</select>
+								<p v-if="!audioOutputSupported">В этом браузере выберите устройство вывода в настройках системы.</p>
 							</li>
 
 							<li class="action" @click="showVideoDevices = !showVideoDevices">
@@ -93,7 +100,7 @@
 								v-if="showVideoDevices"
 								v-for="(videoDevice, i) in videoDevices"
 								v-bind:key="videoDevice.deviceId"
-								@click="selectedVideoDeviceId = videoDevice.deviceId"
+								@click="switchVideoDevice(videoDevice.deviceId)"
 							>
 								<i class="icon-minus" v-if="selectedVideoDeviceId !== videoDevice.deviceId"></i>
 								<i class="icon-check" v-if="selectedVideoDeviceId === videoDevice.deviceId"></i>
